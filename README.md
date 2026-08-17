@@ -161,3 +161,160 @@ EXEC usp_GetEmployeesByDept @DeptName = 'Legal';  -- triggers the "not found" me
 | Q3 | 5 | GROUP BY, HAVING, aggregates |
 | Q4 | 5 | Scalar functions, CASE |
 | Q5 | 8 | Stored procedures, parameters, control flow |
+
+
+
+# SQL Server Practice Assignment — Set 2
+### Focus: Aggregate Functions, Ranking Functions, Date/Time Functions
+
+Uses the same `Departments` and `Employees` tables from Set 1. Run this extra data first so ranking questions have enough rows to be meaningful (includes salary ties on purpose):
+
+```sql
+INSERT INTO Employees (EmpName, DeptID, Salary, HireDate, Email) VALUES
+('Karan Mehta', 1, 55000, '2020-09-01', 'karan@company.com'),
+('Divya Nair', 2, 42000, '2021-04-18', 'divya@company.com'),
+('Arjun Kapoor', 3, 45000, '2018-12-05', 'arjun@company.com'),
+('Isha Malhotra', 4, 70000, '2017-06-30', 'isha@company.com'),
+('Rohan Das', 4, 68000, '2022-01-15', 'rohan@company.com');
+```
+
+---
+
+## Question 1 — Aggregate Functions
+Write a single query that returns, across the entire company:
+- Total number of employees
+- Total salary payout
+- Highest and lowest salary
+- Average salary rounded to 2 decimal places
+- Number of employees who have **no department assigned**
+
+**Answer:**
+```sql
+SELECT 
+    COUNT(*) AS TotalEmployees,
+    SUM(Salary) AS TotalPayout,
+    MAX(Salary) AS HighestSalary,
+    MIN(Salary) AS LowestSalary,
+    ROUND(AVG(Salary), 2) AS AvgSalary,
+    SUM(CASE WHEN DeptID IS NULL THEN 1 ELSE 0 END) AS UnassignedCount
+FROM Employees;
+```
+*Teaching point: Multiple aggregates in one SELECT, plus a conditional COUNT pattern using SUM(CASE...) since COUNT can't directly filter on NULL logic like this.*
+
+---
+
+## Question 2 — RANK vs DENSE_RANK vs ROW_NUMBER
+Rank all employees by salary (highest first), showing all three ranking styles side by side, so students can see how they differ when there are salary ties.
+
+**Answer:**
+```sql
+SELECT 
+    EmpName,
+    Salary,
+    ROW_NUMBER() OVER (ORDER BY Salary DESC) AS RowNum,
+    RANK() OVER (ORDER BY Salary DESC) AS RankNum,
+    DENSE_RANK() OVER (ORDER BY Salary DESC) AS DenseRankNum
+FROM Employees
+ORDER BY Salary DESC;
+```
+*Teaching point: With the tie at salary 55000 (Amit & Karan), ROW_NUMBER gives them different numbers, RANK gives them the same number but skips the next one, DENSE_RANK gives them the same number without skipping. This is the single most common ranking-function interview question.*
+
+---
+
+## Question 3 — PARTITION BY (Ranking within Groups)
+Find the **top 2 highest paid employees in each department** using a window function.
+
+**Answer:**
+```sql
+WITH RankedEmployees AS (
+    SELECT 
+        EmpName,
+        D.DeptName,
+        Salary,
+        DENSE_RANK() OVER (PARTITION BY E.DeptID ORDER BY Salary DESC) AS DeptRank
+    FROM Employees E
+    JOIN Departments D ON E.DeptID = D.DeptID
+)
+SELECT * FROM RankedEmployees
+WHERE DeptRank <= 2
+ORDER BY DeptName, DeptRank;
+```
+*Teaching point: PARTITION BY restarts the ranking for every department — this is how "top N per group" problems are solved in SQL Server. Also introduces CTEs since you can't filter directly on a window function in the same SELECT's WHERE clause.*
+
+---
+
+## Question 4 — Date/Time Functions
+Write a query that shows, for every employee:
+- Hire date formatted as `DD-Mon-YYYY` (e.g., `15-Mar-2021`)
+- The day of the week they were hired on (e.g., Monday)
+- How many months they've been employed (as of today)
+- A flag `AnniversaryThisMonth` = `'Yes'` if their hire-month matches the current month, else `'No'`
+
+**Answer:**
+```sql
+SELECT 
+    EmpName,
+    FORMAT(HireDate, 'dd-MMM-yyyy') AS FormattedHireDate,
+    DATENAME(WEEKDAY, HireDate) AS HireDayOfWeek,
+    DATEDIFF(MONTH, HireDate, GETDATE()) AS MonthsEmployed,
+    CASE 
+        WHEN MONTH(HireDate) = MONTH(GETDATE()) THEN 'Yes'
+        ELSE 'No'
+    END AS AnniversaryThisMonth
+FROM Employees;
+```
+*Teaching point: FORMAT() for display formatting, DATENAME() to extract a named part of a date, DATEDIFF() for elapsed time, and MONTH()/GETDATE() for comparisons. Mention that FORMAT() is flexible but slower on large datasets than CONVERT/style codes — worth a short discussion.*
+
+---
+
+## Question 5 — Combined: Aggregate + Ranking + Date Logic (Capstone)
+Write a query to find, **for each department**, the most recently hired employee (i.e., the one with the latest `HireDate`) along with:
+- Their name and hire date
+- How many years ago they were hired
+- The department's average salary (for comparison)
+- Whether their own salary is above or below the department average (`'Above Avg'` / `'Below Avg'`)
+
+**Answer:**
+```sql
+WITH DeptStats AS (
+    SELECT 
+        EmpID,
+        EmpName,
+        DeptID,
+        Salary,
+        HireDate,
+        AVG(Salary) OVER (PARTITION BY DeptID) AS DeptAvgSalary,
+        ROW_NUMBER() OVER (PARTITION BY DeptID ORDER BY HireDate DESC) AS RecencyRank
+    FROM Employees
+    WHERE DeptID IS NOT NULL
+)
+SELECT 
+    D.DeptName,
+    DS.EmpName,
+    DS.HireDate,
+    DATEDIFF(YEAR, DS.HireDate, GETDATE()) AS YearsAgoHired,
+    ROUND(DS.DeptAvgSalary, 2) AS DeptAvgSalary,
+    CASE 
+        WHEN DS.Salary > DS.DeptAvgSalary THEN 'Above Avg'
+        ELSE 'Below Avg'
+    END AS SalaryComparison
+FROM DeptStats DS
+JOIN Departments D ON DS.DeptID = D.DeptID
+WHERE DS.RecencyRank = 1
+ORDER BY D.DeptName;
+```
+*Teaching point: This is the "everything together" question — window functions (AVG OVER, ROW_NUMBER with PARTITION BY), a CTE, date arithmetic, and conditional logic in one query. Good discussion point: AVG() OVER (PARTITION BY...) computes the group average without collapsing rows, unlike GROUP BY.*
+
+---
+
+## Suggested Marking Scheme (out of 25)
+
+| Question | Marks | Focus |
+|---|---|---|
+| Q1 | 4 | Aggregate functions, conditional counting |
+| Q2 | 4 | ROW_NUMBER vs RANK vs DENSE_RANK |
+| Q3 | 5 | PARTITION BY, CTE, top-N-per-group |
+| Q4 | 5 | Date/time functions, formatting |
+| Q5 | 7 | Combined window functions + CTE + date logic |
+
+**Discussion prompt for class:** Ask students to explain in their own words, using Q2's output, why RANK and DENSE_RANK behave differently after a tie — this is the concept students most often get wrong in interviews.
